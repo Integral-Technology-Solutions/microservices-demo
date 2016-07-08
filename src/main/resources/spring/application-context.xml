@@ -1,0 +1,128 @@
+<beans xmlns="http://www.springframework.org/schema/beans" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context" xmlns:cxf="http://camel.apache.org/schema/cxf"
+       xmlns:camel="http://camel.apache.org/schema/spring" xmlns:soap="http://cxf.apache.org/bindings/soap"
+       xmlns:jaxrs="http://cxf.apache.org/jaxrs" xmlns:jdbc="http://www.springframework.org/schema/jdbc"
+       xsi:schemaLocation="
+http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+http://www.springframework.org/schema/context http://www.springframework.org/schema/context/spring-context.xsd
+http://camel.apache.org/schema/cxf http://camel.apache.org/schema/cxf/camel-cxf.xsd
+http://cxf.apache.org/jaxrs http://cxf.apache.org/schemas/jaxrs.xsd
+http://camel.apache.org/schema/spring http://camel.apache.org/schema/spring/camel-spring.xsd
+http://www.springframework.org/schema/jdbc
+http://www.springframework.org/schema/jdbc/spring-jdbc-4.2.xsd
+">
+
+    <context:component-scan base-package="com.integraltech.*"/>
+
+    <jdbc:embedded-database id="embeddedDataBase" type="H2">
+        <jdbc:script location="classpath:sql/create-db.sql" />
+        <jdbc:script location="classpath:sql/insert-data.sql" />
+    </jdbc:embedded-database>
+
+    <bean id="h2Server" class="org.h2.tools.Server" factory-method="createTcpServer" init-method="start" destroy-method="stop" depends-on="h2WebServer">
+        <constructor-arg value="-tcp,-tcpAllowOthers,-tcpPort,9092"/>
+    </bean>
+    <bean id="h2WebServer" class="org.h2.tools.Server" factory-method="createWebServer" init-method="start" destroy-method="stop">
+        <constructor-arg value="-web,-webAllowOthers,-webPort,8082"/>
+    </bean>
+
+    <bean id="dataSource" class="org.apache.commons.dbcp2.BasicDataSource" destroy-method="close">
+        <property name="driverClassName" value="org.h2.Driver"/>
+        <property name="url" value="jdbc:h2:mem:embeddedDataBase"/>
+        <property name="username" value="sa"/>
+        <property name="password" value=""/>
+    </bean>
+
+    <bean id="serviceProperties" class="org.apache.camel.spring.spi.BridgePropertyPlaceholderConfigurer">
+        <property name="location" value="classpath:service.properties" />
+        <property name="systemPropertiesModeName" value="SYSTEM_PROPERTIES_MODE_OVERRIDE" />
+    </bean>
+
+    <!-- JAXRS providers -->
+    <bean id="jsonProvider" class="com.fasterxml.jackson.jaxrs.json.JacksonJsonProvider" />
+
+    <!-- CXF Swagger2Feature -->
+    <bean id="swagger2Feature" class="org.apache.cxf.jaxrs.swagger.Swagger2Feature">
+        <property name="title" value="Get Employee API"/>
+        <property name="description" value="An endpoint to get employee details"/>
+        <property name="contact" value="support@integraltech.com.au"/>
+        <property name="version" value="1.0"/>
+        <property name="basePath" value="${service.contextPath}"/>
+        <property name="resourcePackage" value="com.integraltech"/>
+        <property name="scan" value="true"/>
+    </bean>
+
+    <jaxrs:server id="documentServer" address="/api-docs" serviceClass="com.integraltech.endpoint.RestEndpoint">
+        <jaxrs:providers>
+            <ref bean="jsonProvider" />
+        </jaxrs:providers>
+        <jaxrs:features>
+            <ref bean="swagger2Feature" />
+        </jaxrs:features>
+    </jaxrs:server>
+
+    <cxf:rsServer id="restServer" address="/"
+                  serviceClass="com.integraltech.endpoint.RestEndpoint"
+                  loggingFeatureEnabled="true" loggingSizeLimit="200">
+    </cxf:rsServer>
+
+    <camelContext id="restServiceContext" xmlns="http://camel.apache.org/schema/spring">
+
+        <dataFormats>
+            <json id="json" library="Jackson" include="NON_NULL" unmarshalTypeName="com.integraltech.model.Employee"/>
+        </dataFormats>
+
+        <route id="restServiceRoute">
+            <from uri="cxfrs://bean://restServer?bindingStyle=SimpleConsumer" />
+            <choice>
+                <when>
+                    <simple>${header.operationName} == 'getAllEmployees'</simple>
+                    <to uri="direct:getAllEmployees"/>
+                </when>
+                <when>
+                    <simple>${header.operationName} == 'getEmployee'</simple>
+                    <to uri="direct:getEmployee"/>
+                </when>
+                <when>
+                    <simple>${header.operationName} == 'getAllPositions'</simple>
+                    <to uri="direct:getAllPositions"/>
+                </when>
+                <when>
+                    <simple>${header.operationName} == 'getPosition'</simple>
+                    <to uri="direct:getPosition"/>
+                </when>
+            </choice>
+        </route>
+
+        <route id="getAllEmployeesRoute">
+            <from uri="direct:getAllEmployees" />
+            <to uri="bean:personService?method=getAllPersons()"/>
+            <split parallelProcessing="true" strategyRef="arrayListAggregationStrategy">
+                <simple>${body}</simple>
+                <to uri="dozer:transformOrder?targetModel=com.integraltech.model.Employee"/>
+            </split>
+            <marshal ref="json"/>
+        </route>
+
+        <route id="getEmployeeRoute">
+            <from uri="direct:getEmployee" />
+            <to uri="bean:personService?method=getPersonById(${header.employeeId})"/>
+            <to uri="dozer:transformOrder?targetModel=com.integraltech.model.Employee"/>
+            <marshal ref="json"/>
+        </route>
+
+        <route id="getPositionRoute">
+            <from uri="direct:getPosition" />
+            <to uri="bean:positionService?method=getPositionById(${header.positionId})"/>
+            <marshal ref="json"/>
+        </route>
+
+        <route id="getAllPositionsRoute">
+            <from uri="direct:getAllPositions" />
+            <to uri="bean:positionService?method=getAllPositions()"/>
+            <marshal ref="json"/>
+        </route>
+
+    </camelContext>
+
+</beans>
