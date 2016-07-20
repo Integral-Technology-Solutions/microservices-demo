@@ -18,7 +18,7 @@ import javax.ws.rs.core.MediaType;
  * Created by jqueen on 2/06/2016.
  */
 @Path("/")
-@Api(value="Get Employee API", description = "Provides endpoints to get employee details")
+@Api(value="Get Employee API endpoint", description = "Provides endpoints to get employee details")
 public class RestEndpoint {
 
     @GET
